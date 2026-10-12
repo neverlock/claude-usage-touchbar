@@ -123,7 +123,8 @@ static int ClipForMood(Mood m, int previous) {
 }
 
 @interface PetView : NSView
-@property (nonatomic) int p5, p7, resetMin, ageSec, scopedPct;
+@property (nonatomic) int p5, p7, resetMin, ageSec, scopedPct, reset7Min;
+@property (nonatomic) long long reset5At, reset7At;   // epoch seconds; 0 = countdown only
 @property (nonatomic, copy) NSString *scopedName;   // per-model weekly cap (e.g. Fable)
 @property (nonatomic, copy) NSString *state;   // ok | stale | expired | none
 @property (nonatomic, copy) NSString *hint;    // command that fixes "expired"
@@ -559,6 +560,14 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
     [self drawReadout];
 }
 
+static NSString *ClockString(long long epoch, NSString *fmt) {
+    static NSDateFormatter *f;
+    static NSString *cur;
+    if (!f) { f = [NSDateFormatter new]; f.locale = [NSLocale localeWithLocaleIdentifier:@"en_US_POSIX"]; }
+    if (![cur isEqualToString:fmt]) { f.dateFormat = fmt; cur = fmt; }
+    return [f stringFromDate:[NSDate dateWithTimeIntervalSince1970:epoch]];
+}
+
 static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *at) {
     CGFloat w = [s sizeWithAttributes:at].width;
     [s drawAtPoint:NSMakePoint(rightEdge - w, y) withAttributes:at];
@@ -604,22 +613,45 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
                      x:READ_X + i * (cellW + CELL_GAP) width:cellW dim:dim];
     }
 
-    // The countdown belongs to the 5h window, so it sits beside that label
-    // rather than in a row of its own. Staleness takes the same slot when it
-    // applies — an old reading matters more than when the next one resets.
-    NSString *note = nil;
-    NSColor *noteColor = [NSColor colorWithWhite:1.0 alpha:0.55];
+    // Reset times, orange, beside the 5h and 7d labels. A source that reports a
+    // real timestamp (GPT) gets a clock time; the rest get a countdown. Staleness
+    // takes the 5h slot when it applies — an old reading matters more than when
+    // the next one resets.
+    NSColor *orange = [NSColor colorWithSRGBRed:1.0 green:0.62 blue:0.20 alpha:0.95];
+    NSString *note5 = nil, *note7 = nil;
+    NSColor *c5 = orange;
     if (old) {
-        note = [NSString stringWithFormat:@"%dm old", self.ageSec / 60];
-        noteColor = [NSColor colorWithSRGBRed:1.0 green:0.78 blue:0.31 alpha:0.95];
+        note5 = [NSString stringWithFormat:@"%dm old", self.ageSec / 60];
+        c5 = [NSColor colorWithSRGBRed:1.0 green:0.78 blue:0.31 alpha:0.95];
+    } else if (self.reset5At > 0) {
+        note5 = ClockString(self.reset5At, @"HH:mm");
     } else if (self.resetMin >= 0) {
-        note = [NSString stringWithFormat:@"%dh%02d", self.resetMin / 60, self.resetMin % 60];
+        note5 = [NSString stringWithFormat:@"%dh%02d", self.resetMin / 60, self.resetMin % 60];
     }
-    if (note) {
-        NSDictionary *at = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:8
-                                                                                    weight:NSFontWeightMedium],
-                              NSForegroundColorAttributeName: noteColor };
-        [note drawAtPoint:NSMakePoint(READ_X + 17, TEXT_Y + 1) withAttributes:at];
+    if (self.reset7At > 0) {
+        note7 = ClockString(self.reset7At, @"EEE HH:mm");
+    } else if (self.reset7Min >= 0 && self.reset7Min <= 10080) {   // >7d = junk from an old cache
+        int m = self.reset7Min;
+        note7 = (m >= 1440)
+            ? [NSString stringWithFormat:@"~%dd%dh", m / 1440, (m % 1440) / 60]
+            : [NSString stringWithFormat:@"%dh%02d", m / 60, m % 60];
+    }
+    CGFloat x7 = READ_X + (n > 1 ? 1 : 0) * (cellW + CELL_GAP);
+    for (int k = 0; k < 2; k++) {
+        NSString *note = k == 0 ? note5 : note7;
+        if (!note) continue;
+        // Same size as the percentage (12pt) when it fits between the label and
+        // the number; steps down only if a long note ("Sun 04:01", "12m old")
+        // would run into the figure at the right of a narrow cell.
+        int pct = k == 0 ? p5 : p7;
+        CGFloat avail = cellW - 19 - (pct >= 90 ? 54 : 38);
+        NSDictionary *at = nil;
+        for (CGFloat sz = 12; sz >= 8; sz -= 1) {
+            at = @{ NSFontAttributeName: [NSFont monospacedDigitSystemFontOfSize:sz weight:NSFontWeightSemibold],
+                    NSForegroundColorAttributeName: k == 0 ? c5 : orange };
+            if ([note sizeWithAttributes:at].width <= avail) break;
+        }
+        [note drawAtPoint:NSMakePoint((k == 0 ? READ_X : x7) + 19, TEXT_Y - 1) withAttributes:at];
     }
 }
 
@@ -982,6 +1014,9 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     // noise on a 30pt strip.
     self.pet.scopedPct  = (parts.count >= 6) ? parts[5].intValue : -1;
     self.pet.scopedName = (parts.count >= 7) ? parts[6] : @"";
+    self.pet.reset7Min = (parts.count >= 8)  ? parts[7].intValue : -1;
+    self.pet.reset5At  = (parts.count >= 9)  ? parts[8].longLongValue : 0;
+    self.pet.reset7At  = (parts.count >= 10) ? parts[9].longLongValue : 0;
     self.pet.haveData = ![parts[4] isEqualToString:@"none"];
 }
 
@@ -1107,6 +1142,11 @@ static int RenderShot(NSString *out, int p5, int p7, int resetMin, int ageSec,
     v.scopedPct = scopedPct; v.scopedName = scopedName;
     v.state = @"ok"; v.haveData = YES; v.x = 60;
     v.gpt = getenv("TB_GPT") != NULL;   // ponytail: env switch for --shot only
+    v.reset7Min = 7617;                 // preview: 5d7h
+    if (v.gpt) {
+        v.reset5At = (long long)NSDate.date.timeIntervalSince1970 + resetMin * 60;
+        v.reset7At = (long long)NSDate.date.timeIntervalSince1970 + 7617 * 60;
+    }
 
     // Two passes, for the reason spelled out in RenderStates: drawRect: opens
     // by clearing itself in copy mode, so the backdrop has to go on afterwards.

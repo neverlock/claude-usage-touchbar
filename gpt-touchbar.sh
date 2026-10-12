@@ -2,7 +2,10 @@
 # ChatGPT/Codex usage for the Touch Bar widget.
 #
 # Same --raw contract as claude-touchbar.sh:
-#   "<5h%> <7d%> <resetMin> <ageSec> <state> <scopedPct> <scopedName>"
+#   "<5h%> <7d%> <resetMin> <ageSec> <state> <scopedPct> <scopedName>
+#    <reset7Min> <reset5Epoch> <reset7Epoch>"
+# Codex reports real reset timestamps, so the epochs are filled in and the
+# widget shows clock times for GPT instead of countdowns.
 #
 # Source: the newest ~/.codex/sessions rollout log. Codex writes a
 # `rate_limits` object (primary/secondary windows) into every token_count
@@ -14,7 +17,7 @@
 set -uo pipefail
 
 PY=/usr/bin/python3
-[ -x "$PY" ] || PY=$(command -v python3) || { echo "0 0 -1 -1 none -1 -"; exit 0; }
+[ -x "$PY" ] || PY=$(command -v python3) || { echo "0 0 -1 -1 none -1 - -1 0 0"; exit 0; }
 
 exec "$PY" -I - "${CODEX_HOME:-$HOME/.codex}/sessions" <<'EOF'
 import json, os, sys, time
@@ -46,12 +49,13 @@ def newest_with_limits():
 
 rl, ts, mtime = newest_with_limits()
 if not rl:
-    print("0 0 -1 -1 none -1 -"); sys.exit(0)
+    print("0 0 -1 -1 none -1 - -1 0 0"); sys.exit(0)
 
 now = time.time()
 age = max(0, int(now - mtime))
 p5 = p7 = -1
-reset = -1
+reset = reset7 = -1
+e5 = e7 = 0
 for w in (rl.get("primary"), rl.get("secondary")):
     if not isinstance(w, dict):
         continue
@@ -64,12 +68,16 @@ for w in (rl.get("primary"), rl.get("secondary")):
         p5 = round(used)
         if isinstance(at, (int, float)) and at >= now:
             reset = round((at - now) / 60)
+            e5 = int(at)
     elif mins == 10080:
         p7 = round(used)
+        if isinstance(at, (int, float)) and at >= now:
+            reset7 = round((at - now) / 60)
+            e7 = int(at)
 
 if p5 < 0 and p7 < 0:
-    print("0 0 -1 -1 none -1 -"); sys.exit(0)
+    print("0 0 -1 -1 none -1 - -1 0 0"); sys.exit(0)
 
 state = "stale" if age > 3600 else "ok"       # Codex idle for an hour: say so
-print(f"{max(p5,0)} {max(p7,0)} {reset} {age} {state} -1 -")
+print(f"{max(p5,0)} {max(p7,0)} {reset} {age} {state} -1 - {reset7} {e5} {e7}")
 EOF

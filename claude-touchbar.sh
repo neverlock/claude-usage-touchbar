@@ -15,7 +15,7 @@
 # or a log — and is unset immediately after.
 set -uo pipefail
 
-CACHE=/tmp/.claude-usage-$UID          # "5h 7d resetMin scopedPct scopedName epoch"
+CACHE=/tmp/.claude-usage-$UID          # "5h 7d resetMin scopedPct scopedName reset7Min epoch"
 TTL=60
 
 # /usr/bin/python3 ships with the Command Line Tools, which this project already
@@ -23,15 +23,15 @@ TTL=60
 # version pointed at a hard-coded nvm path, which worked on exactly one machine.
 PY=/usr/bin/python3
 [ -x "$PY" ] || PY=$(command -v python3) || {
-  echo "0 0 -1 -1 none"; exit 0; }
+  echo "0 0 -1 -1 none -1 - -1 0 0"; exit 0; }
 
-read_cache() {                          # -> P5 P7 RESET SP SN STAMP
+read_cache() {                          # -> P5 P7 RESET SP SN R7 STAMP
   [ -f "$CACHE" ] || return 1
-  read -r P5 P7 RESET SP SN STAMP < "$CACHE" 2>/dev/null || :
+  read -r P5 P7 RESET SP SN R7 STAMP < "$CACHE" 2>/dev/null || :
   [ -n "${P5:-}" ]
 }
 
-P5=; P7=; RESET=-1; SP=-1; SN=-; STAMP=0
+P5=; P7=; RESET=-1; SP=-1; SN=-; R7=-1; STAMP=0
 read_cache || :
 AGE=$(( $(date +%s) - ${STAMP:-0} ))
 
@@ -90,17 +90,20 @@ for l in j.get("limits") or []:
         nm = ((l.get("scope") or {}).get("model") or {}).get("display_name")
         if nm: sn = re.sub(r"\s+", "", nm)
 
-m = -1
-t = (j.get("five_hour") or {}).get("resets_at")
-if t:
+def mins(t):
+    if not t:
+        return -1
     try:
         # fromisoformat only learned to accept a trailing Z in 3.11.
         d = datetime.datetime.fromisoformat(t.replace("Z", "+00:00"))
-        m = max(0, round((d - datetime.datetime.now(d.tzinfo)).total_seconds() / 60))
+        return max(0, round((d - datetime.datetime.now(d.tzinfo)).total_seconds() / 60))
     except Exception:
-        pass
+        return -1
 
-print(f"{p5} {p7} {m} {sp} {sn}")')
+m  = mins((j.get("five_hour") or {}).get("resets_at"))
+m7 = mins((j.get("seven_day") or {}).get("resets_at"))
+
+print(f"{p5} {p7} {m} {sp} {sn} {m7}")')
       case "$parsed" in
         ''|-1\ -1\ *) state=stale ;;
         *) printf '%s %s\n' "$parsed" "$(date +%s)" > "$CACHE"; chmod 600 "$CACHE"
@@ -115,13 +118,14 @@ fi
 # A known cause beats "no data": report expired even with an empty cache,
 # otherwise a first run on a dead token looks like a first run on a fresh one.
 if [ -z "${P5:-}" ]; then
-  [ "$state" = expired ] && { echo "0 0 -1 -1 expired"; exit 0; }
-  echo "0 0 -1 -1 none"; exit 0
+  [ "$state" = expired ] && { echo "0 0 -1 -1 expired -1 - -1 0 0"; exit 0; }
+  echo "0 0 -1 -1 none -1 - -1 0 0"; exit 0
 fi
 [ "$state" = ok ] || AGE=$(( $(date +%s) - ${STAMP:-0} ))
 
 case "${1:-}" in
-  --raw) printf '%s %s %s %s %s %s %s\n' "$P5" "$P7" "$RESET" "$AGE" "$state" "${SP:--1}" "${SN:--}" ;;
+  # fields 8-10: reset7Min, reset5 epoch, reset7 epoch (0 = none; Claude gives countdowns)
+  --raw) printf '%s %s %s %s %s %s %s %s 0 0\n' "$P5" "$P7" "$RESET" "$AGE" "$state" "${SP:--1}" "${SN:--}" "${R7:--1}" ;;
   *)
      case "$state" in
        expired) printf 'token expired — run: claude -p hi   (last: 5h %s%%  7d %s%%)\n' "$P5" "$P7" ;;
