@@ -28,7 +28,12 @@ extern void DFRSystemModalShowsCloseBoxWhenFrontMost(BOOL show);
 @end
 
 static NSTouchBarItemIdentifier const kSceneID = @"local.claude-touchbar.scene";
-static NSTouchBarItemIdentifier const kExitID  = @"local.claude-touchbar.exit";
+static NSTouchBarItemIdentifier const kPadID    = @"local.claude-touchbar.pad";
+static NSTouchBarItemIdentifier const kTrailID  = @"local.claude-touchbar.trail";
+// Layout: [pad][scene][toggle], centred by the bar. With toggle width T and
+// item gap g, a pad of 2T+g puts the scene exactly where it sat in the
+// [toggle][scene] layout, with the toggle now behind it.
+static CGFloat const kToggleW = 64.0, kItemGap = 8.0;
 static NSTouchBarItemIdentifier const kToggleID = @"local.claude-touchbar.toggle";
 // One reader per provider, same --raw contract. Index = provider.
 static NSString *const kScripts[]  = { @"~/bin/claude-touchbar.sh --raw", @"~/bin/gpt-touchbar.sh --raw" };
@@ -40,7 +45,13 @@ static int const kProviders = 2;
 // legible label is 600, so that is the usable width beside the Control Strip.
 // The window reports 685pt, but part of that is never presented — trusting the
 // window figure clipped the third readout cell clean off.
-static CGFloat const kSceneW = 600.0;
+// Narrowed to 390: with the system close box to its left and the toggle to its right, the Control Strip hid the
+// right part of the readout at 520 (7d cell visible to ~70%).
+// 536 = 390 + kRunExtra: widens the run range from ~54pt to ~200pt, on the left.
+// The pad shrinks by the same amount (and goes to the far side once it hits
+// zero) so the graph stays where it was.
+static CGFloat const kSceneW = 536.0;
+static CGFloat const kRunExtra = 146.0;
 static CGFloat const kSceneH = 30.0;
 static double  const kFPS    = 15.0;    // both reference pet apps land at 14-18
 
@@ -48,7 +59,7 @@ static double  const kFPS    = 15.0;    // both reference pet apps land at 14-18
 // out side by side so they can be compared at a glance. Earlier versions gave
 // 5h and 7d a row each and demoted the per-model cap to a bare number with no
 // bar, which made the one number you could not compare the odd one out.
-#define READ_W    300.0
+#define READ_W    270.0
 #define READ_X    (kSceneW - READ_W - 8)   // right-aligned: usage is the thing
                                            // you look for, so it sits where the
                                            // eye lands last and stays put
@@ -863,7 +874,6 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
         self.bar = [NSTouchBar new];
         self.bar.delegate = self;
         self.bar.defaultItemIdentifiers = @[kSceneID];
-        self.bar.escapeKeyReplacementItemIdentifier = kExitID;
         [self present];
         NSLog(@"palette mode — press Ctrl-C to exit");
         return;
@@ -876,10 +886,10 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 
     self.bar = [NSTouchBar new];
     self.bar.delegate = self;
-    self.bar.defaultItemIdentifiers = @[kSceneID, kToggleID];
-    // A presented bar covers the system Esc slot; use it as the way out of this
-    // app. ponytail: Esc itself is gone while the widget runs, by request.
-    self.bar.escapeKeyReplacementItemIdentifier = kExitID;
+    self.bar.defaultItemIdentifiers = (2 * kToggleW + kItemGap - kRunExtra >= 0)
+        ? @[kPadID, kSceneID, kToggleID] : @[kSceneID, kToggleID, kTrailID];
+    // No Esc replacement: Macs with a physical Esc key don't need one, and the
+    // slot would push the readout under the Control Strip. The system supplies its own close box.
 
     [self present];
 
@@ -930,15 +940,20 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
             it.view = self.pet;
         return it;
     }
+    if ([identifier isEqualToString:kPadID] || [identifier isEqualToString:kTrailID]) {
+        NSCustomTouchBarItem *it = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        NSView *v = [NSView new];
+        CGFloat p = 2 * kToggleW + kItemGap - kRunExtra;      // >0 leading, <0 trailing
+        [v.widthAnchor constraintEqualToConstant:fabs(p)].active = YES;
+        it.view = v;
+        return it;
+    }
     if ([identifier isEqualToString:kToggleID]) {
         NSCustomTouchBarItem *it = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
         self.toggleButton = [NSButton buttonWithTitle:kNames[self.provider] target:self action:@selector(toggle:)];
+        // Fixed width: "claude" vs "gpt" would otherwise re-centre the bar on toggle.
+        [self.toggleButton.widthAnchor constraintEqualToConstant:kToggleW].active = YES;
         it.view = self.toggleButton;
-        return it;
-    }
-    if ([identifier isEqualToString:kExitID]) {
-        NSCustomTouchBarItem *it = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
-        it.view = [NSButton buttonWithTitle:@"❌" target:NSApp action:@selector(terminate:)];
         return it;
     }
     return nil;

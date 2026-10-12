@@ -116,12 +116,10 @@ No entitlements are requested and ad-hoc signing is sufficient. Nothing here
 needs Full Disk Access, Screen Recording, Accessibility, or any other TCC
 permission.
 
-## The Escape slot
+## Esc and exit
 
-Presenting a Touch Bar covers the system Escape key, so the app uses that slot
-for a ❌ button that calls `-[NSApp terminate:]`. It posts no key events and
-needs no Accessibility permission. Esc is unavailable on the Touch Bar while
-the widget runs; quit it (❌ or `make stop`) to get it back.
+The app posts no key events, needs no Accessibility permission, and does not
+replace the system Esc key. It adds no exit button; stop it with `make stop`.
 
 If you find any statement here that the source does not support, please open an
 issue.

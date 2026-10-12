@@ -41,8 +41,7 @@ consequences: it can never ship on the App Store, and a future macOS could
 break it (the app exits cleanly if the API disappears rather than crashing).
 
 **It asks for no permissions to show you your usage** — no Full Disk Access, no
-Screen Recording, no Accessibility, nothing. The leftmost Touch Bar button (❌)
-quits the app; it replaces the system Esc key for as long as the widget runs.
+Screen Recording, no Accessibility, nothing. The button on the Touch Bar toggles Claude / GPT. Quit with `make stop`.
 
 See [SECURITY.md](SECURITY.md) for exactly where the token goes.
 
