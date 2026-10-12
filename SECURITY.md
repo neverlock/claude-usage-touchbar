@@ -113,31 +113,18 @@ the app logs and exits instead of crashing. This is also why the app can never
 be distributed through the App Store.
 
 No entitlements are requested and ad-hoc signing is sufficient. Nothing here
-needs Full Disk Access, Screen Recording, or any other TCC permission — with
-one exception you should know about before you install it.
+needs Full Disk Access, Screen Recording, Accessibility, or any other TCC
+permission.
 
-## The Escape key, and the one permission that may be asked for
+## The Escape slot
 
-Presenting a Touch Bar covers the system Escape key, so the app draws a
-replacement. Pressing it synthesises a real key event:
+Presenting a Touch Bar covers the system Escape key, so the app uses that slot
+for a ❌ button that calls `-[NSApp terminate:]`. It posts no key events and
+needs no Accessibility permission. Esc is unavailable on the Touch Bar while
+the widget runs; quit it (❌ or `make stop`) to get it back.
 
-```objc
-CGEventPost(kCGHIDEventTap, CGEventCreateKeyboardEvent(NULL, 53, true));
-```
-
-**Posting synthetic key events is exactly what the Accessibility permission
-governs.** On this machine the button works and macOS has not asked, but that
-may be because of how the event is routed on a Touch Bar rather than a general
-rule, and the behaviour has changed between macOS releases before. Treat it as:
-if a permission dialog appears, it will be *Accessibility*, it will be caused by
-pressing the Escape button, and declining it costs you only that button — the
-usage readout does not depend on it.
-
-An earlier version of this file claimed no permission could ever be requested.
-That claim was written from intent rather than from reading this code path, and
-it was the kind of unverified reassurance a security document should never
-contain. If you find any other statement here that the source does not support,
-please open an issue.
+If you find any statement here that the source does not support, please open an
+issue.
 
 ## Reporting
 

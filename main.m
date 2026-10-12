@@ -28,7 +28,7 @@ extern void DFRSystemModalShowsCloseBoxWhenFrontMost(BOOL show);
 @end
 
 static NSTouchBarItemIdentifier const kSceneID = @"local.claude-touchbar.scene";
-static NSTouchBarItemIdentifier const kEscID   = @"local.claude-touchbar.esc";
+static NSTouchBarItemIdentifier const kExitID  = @"local.claude-touchbar.exit";
 static NSTouchBarItemIdentifier const kToggleID = @"local.claude-touchbar.toggle";
 // One reader per provider, same --raw contract. Index = provider.
 static NSString *const kScripts[]  = { @"~/bin/claude-touchbar.sh --raw", @"~/bin/gpt-touchbar.sh --raw" };
@@ -863,7 +863,7 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
         self.bar = [NSTouchBar new];
         self.bar.delegate = self;
         self.bar.defaultItemIdentifiers = @[kSceneID];
-        self.bar.escapeKeyReplacementItemIdentifier = kEscID;
+        self.bar.escapeKeyReplacementItemIdentifier = kExitID;
         [self present];
         NSLog(@"palette mode — press Ctrl-C to exit");
         return;
@@ -877,8 +877,9 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     self.bar = [NSTouchBar new];
     self.bar.delegate = self;
     self.bar.defaultItemIdentifiers = @[kSceneID, kToggleID];
-    // Keep Esc working — a presented bar otherwise covers the system one.
-    self.bar.escapeKeyReplacementItemIdentifier = kEscID;
+    // A presented bar covers the system Esc slot; use it as the way out of this
+    // app. ponytail: Esc itself is gone while the widget runs, by request.
+    self.bar.escapeKeyReplacementItemIdentifier = kExitID;
 
     [self present];
 
@@ -935,9 +936,9 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
         it.view = self.toggleButton;
         return it;
     }
-    if ([identifier isEqualToString:kEscID]) {
+    if ([identifier isEqualToString:kExitID]) {
         NSCustomTouchBarItem *it = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
-        it.view = [NSButton buttonWithTitle:@"esc" target:self action:@selector(sendEscape:)];
+        it.view = [NSButton buttonWithTitle:@"❌" target:NSApp action:@selector(terminate:)];
         return it;
     }
     return nil;
@@ -967,16 +968,6 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     self.pet.scopedPct  = (parts.count >= 6) ? parts[5].intValue : -1;
     self.pet.scopedName = (parts.count >= 7) ? parts[6] : @"";
     self.pet.haveData = ![parts[4] isEqualToString:@"none"];
-}
-
-- (void)sendEscape:(id)sender {
-    // Posting to the system requires no special right for a plain key event.
-    CGEventRef down = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)53, true);
-    CGEventRef up   = CGEventCreateKeyboardEvent(NULL, (CGKeyCode)53, false);
-    CGEventPost(kCGHIDEventTap, down);
-    CGEventPost(kCGHIDEventTap, up);
-    if (down) CFRelease(down);
-    if (up)   CFRelease(up);
 }
 
 - (void)frame {
