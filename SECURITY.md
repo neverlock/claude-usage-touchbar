@@ -47,14 +47,24 @@ contacts at runtime. You can confirm that yourself:
 grep -oE 'https?://[^ "]+' ~/bin/claude-touchbar.sh
 ```
 
+## The GPT reader
+
+`~/bin/gpt-touchbar.sh` reads **no credential and makes no network call.** It
+scans the newest `~/.codex/sessions/**/*.jsonl` Codex log for the last
+`rate_limits` object (written by the Codex CLI itself on every turn) and prints
+its percentages. `~/.codex/auth.json` is never opened. Consequence: the GPT
+numbers are only as fresh as your last Codex turn; the `age` field and the
+`stale` state (older than 1h) say so.
+
 ## What the GUI process can do
 
 Nothing, with respect to your credentials. `ClaudeTouchBar.app`:
 
 - never links `Security.framework` and never calls any keychain API
 - opens no sockets — it has no networking code at all
-- spawns exactly one subprocess: `/bin/bash -lc ~/bin/claude-touchbar.sh --raw`
-- parses six whitespace-separated numbers and strings from that output
+- spawns exactly two subprocesses per poll: `/bin/bash -lc ~/bin/claude-touchbar.sh --raw`
+  and `/bin/bash -lc ~/bin/gpt-touchbar.sh --raw`
+- parses whitespace-separated numbers and strings from that output
 
 The split exists so that the component with credential and network access is
 around 100 lines of shell you can audit in a sitting, rather than a compiled

@@ -20,7 +20,8 @@ all: $(BIN)
 install-script:
 	@mkdir -p $(HOME)/bin
 	@install -m 755 claude-touchbar.sh $(HOME)/bin/claude-touchbar.sh
-	@echo "installed $(HOME)/bin/claude-touchbar.sh"
+	@install -m 755 gpt-touchbar.sh $(HOME)/bin/gpt-touchbar.sh
+	@echo "installed $(HOME)/bin/claude-touchbar.sh and gpt-touchbar.sh"
 
 # Clawd's pose data is not redistributed — pull it onto this machine first.
 assets:

@@ -29,7 +29,12 @@ extern void DFRSystemModalShowsCloseBoxWhenFrontMost(BOOL show);
 
 static NSTouchBarItemIdentifier const kSceneID = @"local.claude-touchbar.scene";
 static NSTouchBarItemIdentifier const kEscID   = @"local.claude-touchbar.esc";
-static NSString *const kScript = @"~/bin/claude-touchbar.sh --raw";
+static NSTouchBarItemIdentifier const kToggleID = @"local.claude-touchbar.toggle";
+// One reader per provider, same --raw contract. Index = provider.
+static NSString *const kScripts[]  = { @"~/bin/claude-touchbar.sh --raw", @"~/bin/gpt-touchbar.sh --raw" };
+static NSString *const kNames[]    = { @"claude", @"gpt" };
+static NSString *const kRefresh[]  = { @"claude -p hi", @"codex" };
+static int const kProviders = 2;
 
 // Measured with `make ruler`, which draws ticks at fixed coordinates: the last
 // legible label is 600, so that is the usable width beside the Control Strip.
@@ -110,8 +115,10 @@ static int ClipForMood(Mood m, int previous) {
 @property (nonatomic) int p5, p7, resetMin, ageSec, scopedPct;
 @property (nonatomic, copy) NSString *scopedName;   // per-model weekly cap (e.g. Fable)
 @property (nonatomic, copy) NSString *state;   // ok | stale | expired | none
+@property (nonatomic, copy) NSString *hint;    // command that fixes "expired"
 @property (nonatomic) CGFloat x, dir, phase;
 @property (nonatomic) BOOL haveData;
+@property (nonatomic) BOOL gpt;                 // draw the GPT knot instead of Clawd
 @property (nonatomic) Act act;
 @property (nonatomic) NSInteger clip;           // frame index within the clip
 @property (nonatomic) NSInteger clipIdx;        // which clip in kClawdClips
@@ -301,6 +308,25 @@ static int ClipForMood(Mood m, int previous) {
 
 #pragma mark - Sprite
 
+// GPT's stand-in for Clawd: a six-petal knot drawn as vectors (nothing fetched
+// or bundled). It rolls along the ground like a wheel; the roll speed is the
+// same walk phase Clawd's legs use, so mood still sets the pace.
+static void DrawKnot(NSPoint c, CGFloat R, CGFloat deg, NSColor *col) {
+    [col setStroke];
+    CGFloat a = R * 0.58, b = R * 0.26, d = R * 0.46;
+    for (int k = 0; k < 6; k++) {
+        NSBezierPath *p = [NSBezierPath bezierPathWithOvalInRect:NSMakeRect(-a, -b, 2 * a, 2 * b)];
+        NSAffineTransform *t = [NSAffineTransform transform];
+        [t translateXBy:c.x yBy:c.y];
+        [t rotateByDegrees:deg + k * 60.0];
+        [t translateXBy:d yBy:0];
+        [t rotateByDegrees:30.0];
+        [p transformUsingAffineTransform:t];
+        p.lineWidth = 1.5;
+        [p stroke];
+    }
+}
+
 
 // Walk cycle: the official art has no walking pose, so build one from the base
 // grid by moving the four legs. Row 14-16 hold the legs at columns 5, 8, 12, 15.
@@ -409,7 +435,7 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
     if (!self.haveData) {
         NSDictionary *at = @{ NSFontAttributeName: [NSFont systemFontOfSize:12],
                               NSForegroundColorAttributeName: NSColor.secondaryLabelColor };
-        [@"claude …" drawAtPoint:NSMakePoint(20, midY - 8) withAttributes:at];
+        [(self.gpt ? @"gpt …" : @"claude …") drawAtPoint:NSMakePoint(20, midY - 8) withAttributes:at];
         return;
     }
 
@@ -443,7 +469,24 @@ static void DrawGrid(const unsigned char *g, NSPoint origin, CGFloat px,
 
     const unsigned char *base = kClawdClips[0].frames[0].grid;   // canonical pose
 
-    if (self.dragging) {
+    if (self.gpt) {
+        CGFloat const R = 12.0;
+        NSColor *gc = (mood == MoodPanic)
+            ? [NSColor colorWithSRGBRed:0.95 green:0.35 blue:0.30 alpha:1.0]
+            : [NSColor colorWithSRGBRed:0.20 green:0.78 blue:0.60 alpha:1.0];   // ChatGPT green
+        CGFloat spin = -self.dir * self.phase * 28.0;       // rolls the way it travels
+        NSPoint c = NSMakePoint(self.x, feet.y + R + 1.0);
+        if (self.dragging) {
+            CGFloat t = self.wiggleT;
+            c.x += sin(t * 16.0) * 1.3; c.y += sin(t * 13.0) * 1.5;
+        } else if (self.act == ActClip) {
+            spin = self.clipT * 0.36;                       // a canned clip = a fast spin
+        } else if (self.act == ActJuggle) {
+            [NSColor.whiteColor set];
+            NSRectFill(NSMakeRect(c.x - 1.7, c.y + R + 1 + self.ballY, 3.4, 3.4));
+        }
+        DrawKnot(c, R, spin, gc);
+    } else if (self.dragging) {
         // Startled, not malfunctioning: a fast wobble with a slow sway under
         // it, so the motion has a shape instead of reading as vibration.
         CGFloat t = self.wiggleT;
@@ -525,7 +568,7 @@ static void DrawRight(NSString *s, CGFloat rightEdge, CGFloat y, NSDictionary *a
         NSDictionary *s = @{ NSFontAttributeName: [NSFont monospacedSystemFontOfSize:10 weight:NSFontWeightRegular],
                              NSForegroundColorAttributeName: [NSColor colorWithWhite:1.0 alpha:0.55] };
         [@"token expired" drawAtPoint:NSMakePoint(READ_X, h - 16) withAttributes:t];
-        [@"claude -p hi" drawAtPoint:NSMakePoint(READ_X, 3) withAttributes:s];
+        [(self.hint ?: @"claude -p hi") drawAtPoint:NSMakePoint(READ_X, 3) withAttributes:s];
         return;
     }
 
@@ -789,6 +832,9 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
 @property (nonatomic) BOOL paletteMode;
 @property (nonatomic) BOOL rulerMode;
 @property (nonatomic) BOOL sweatMode;
+@property (nonatomic) int provider;                       // index into kScripts
+@property (nonatomic, strong) NSMutableArray<NSArray<NSString *> *> *readings;  // last parts per provider
+@property (nonatomic, strong) NSButton *toggleButton;
 @property (nonatomic, strong) NSTouchBar *bar;
 @property (nonatomic, strong) PetView *pet;
 @property (nonatomic, strong) NSTimer *frameTimer;
@@ -824,10 +870,13 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     }
 
     self.pet = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
+    self.readings = [NSMutableArray new];
+    for (int i = 0; i < kProviders; i++) [self.readings addObject:@[]];
+    self.pet.hint = kRefresh[0];
 
     self.bar = [NSTouchBar new];
     self.bar.delegate = self;
-    self.bar.defaultItemIdentifiers = @[kSceneID];
+    self.bar.defaultItemIdentifiers = @[kSceneID, kToggleID];
     // Keep Esc working — a presented bar otherwise covers the system one.
     self.bar.escapeKeyReplacementItemIdentifier = kEscID;
 
@@ -880,12 +929,44 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
             it.view = self.pet;
         return it;
     }
+    if ([identifier isEqualToString:kToggleID]) {
+        NSCustomTouchBarItem *it = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
+        self.toggleButton = [NSButton buttonWithTitle:kNames[self.provider] target:self action:@selector(toggle:)];
+        it.view = self.toggleButton;
+        return it;
+    }
     if ([identifier isEqualToString:kEscID]) {
         NSCustomTouchBarItem *it = [[NSCustomTouchBarItem alloc] initWithIdentifier:identifier];
         it.view = [NSButton buttonWithTitle:@"esc" target:self action:@selector(sendEscape:)];
         return it;
     }
     return nil;
+}
+
+- (void)toggle:(id)sender {
+    self.provider = (self.provider + 1) % kProviders;
+    self.toggleButton.title = kNames[self.provider];
+    [self applyReading];
+}
+
+// Both providers are polled every cycle; toggling only swaps which stored
+// reading the pet shows, so an in-flight poll can never write the wrong one.
+- (void)applyReading {
+    NSArray<NSString *> *parts = self.readings[self.provider];
+    self.pet.hint = kRefresh[self.provider];
+    self.pet.gpt = (self.provider == 1);
+    if (parts.count < 5) { self.pet.haveData = NO; return; }
+    self.pet.p5 = parts[0].intValue;
+    self.pet.p7 = parts[1].intValue;
+    self.pet.resetMin = parts[2].intValue;
+    self.pet.ageSec = parts[3].intValue;
+    self.pet.state = parts[4];
+    // The API also reports a per-model weekly cap (kind=weekly_scoped).
+    // Only surface it once it is actually being consumed — at 0% it is
+    // noise on a 30pt strip.
+    self.pet.scopedPct  = (parts.count >= 6) ? parts[5].intValue : -1;
+    self.pet.scopedName = (parts.count >= 7) ? parts[6] : @"";
+    self.pet.haveData = ![parts[4] isEqualToString:@"none"];
 }
 
 - (void)sendEscape:(id)sender {
@@ -915,39 +996,31 @@ static void DrawDrop(CGFloat x, CGFloat y, CGFloat scale, NSColor *c, CGFloat al
     self.polling = YES;
 
     dispatch_async(self.shell, ^{
-        NSTask *task = [NSTask new];
-        task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
-        task.arguments = @[@"-lc", kScript];
-        NSPipe *pipe = [NSPipe pipe];
-        task.standardOutput = pipe;
-        task.standardError = NSFileHandle.fileHandleWithNullDevice;
+        NSMutableArray<NSArray<NSString *> *> *got = [NSMutableArray new];
+        for (int i = 0; i < kProviders; i++) {
+            NSTask *task = [NSTask new];
+            task.executableURL = [NSURL fileURLWithPath:@"/bin/bash"];
+            task.arguments = @[@"-lc", kScripts[i]];
+            NSPipe *pipe = [NSPipe pipe];
+            task.standardOutput = pipe;
+            task.standardError = NSFileHandle.fileHandleWithNullDevice;
 
-        NSString *out = nil;
-        NSError *err = nil;
-        if ([task launchAndReturnError:&err]) {
-            NSData *d = [pipe.fileHandleForReading readDataToEndOfFile];
-            [task waitUntilExit];
-            out = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+            NSString *out = nil;
+            NSError *err = nil;
+            if ([task launchAndReturnError:&err]) {
+                NSData *d = [pipe.fileHandleForReading readDataToEndOfFile];
+                [task waitUntilExit];
+                out = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+            }
+            [got addObject:[[out ?: @""
+                stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
+                componentsSeparatedByString:@" "]];
         }
 
-        NSArray<NSString *> *parts = [[out ?: @""
-            stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]
-            componentsSeparatedByString:@" "];
-
         dispatch_async(dispatch_get_main_queue(), ^{
-            if (parts.count >= 5) {
-                self.pet.p5 = parts[0].intValue;
-                self.pet.p7 = parts[1].intValue;
-                self.pet.resetMin = parts[2].intValue;
-                self.pet.ageSec = parts[3].intValue;
-                self.pet.state = parts[4];
-                // The API also reports a per-model weekly cap (kind=weekly_scoped).
-                // Only surface it once it is actually being consumed — at 0% it is
-                // noise on a 30pt strip.
-                self.pet.scopedPct  = (parts.count >= 6) ? parts[5].intValue : -1;
-                self.pet.scopedName = (parts.count >= 7) ? parts[6] : @"";
-                self.pet.haveData = ![parts[4] isEqualToString:@"none"];
-            }
+            for (int i = 0; i < kProviders; i++)
+                if (got[i].count >= 5) self.readings[i] = got[i];
+            [self applyReading];
             self.polling = NO;
         });
     });
@@ -1027,6 +1100,7 @@ static int RenderShot(NSString *out, int p5, int p7, int resetMin, int ageSec,
     v.p5 = p5; v.p7 = p7; v.resetMin = resetMin; v.ageSec = ageSec;
     v.scopedPct = scopedPct; v.scopedName = scopedName;
     v.state = @"ok"; v.haveData = YES; v.x = 60;
+    v.gpt = getenv("TB_GPT") != NULL;   // ponytail: env switch for --shot only
 
     // Two passes, for the reason spelled out in RenderStates: drawRect: opens
     // by clearing itself in copy mode, so the backdrop has to go on afterwards.
@@ -1063,6 +1137,7 @@ static int RenderFilm(NSString *dir, double secs) {
     PetView *v = [[PetView alloc] initWithFrame:NSMakeRect(0, 0, kSceneW, kSceneH)];
     v.p5 = 62; v.p7 = 61; v.resetMin = 93; v.scopedPct = 61; v.scopedName = @"Fable";
     v.state = @"ok"; v.haveData = YES; v.x = 60;
+    v.gpt = getenv("TB_GPT") != NULL;   // ponytail: env switch for --shot only
 
     int n = (int)(secs * kFPS);
     for (int i = 0; i < n; i++) {

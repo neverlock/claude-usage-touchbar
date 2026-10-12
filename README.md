@@ -73,6 +73,9 @@ make assets            # fetches Clawd's poses onto this machine
 make run
 ```
 
+A button next to the readout toggles between `claude` and `gpt`. The GPT side
+reads Codex CLI session logs, so it updates only when you use Codex.
+
 Then set **System Settings → Keyboard → Touch Bar Settings → Touch Bar shows**
 to *App Controls* if it is not already.
 
@@ -117,6 +120,7 @@ preferences, no keychain entry of its own.
 
 ```
 ~/bin/claude-touchbar.sh     keychain → API → cache → "5h 7d resetMin age state ..."
+~/bin/gpt-touchbar.sh        newest ~/.codex session log → same format (no network)
         ↑ NSTask every 30s
 ClaudeTouchBar.app           draws the bars and the creature at 15fps
 ```
